@@ -1,4 +1,4 @@
-Lottery Analyzer PWA v1.1.2
+Lottery Analyzer PWA v1.1.3
 
 This is the Android/PWA version of the Lottery Analyzer.
 
@@ -38,11 +38,16 @@ The user must choose the CSV manually, unless we host the CSV online and add aut
 Next recommended improvement:
 - Add Recommendation vs Actual Result comparison module.
 
-Fix in v1.1.2:
+Fix in v1.1.3:
 - Better Hebrew CSV handling using windows-1255 / iso-8859-8 decoding fallback.
 - Automatic delimiter detection for comma / semicolon / tab.
 - More flexible header matching.
 
-Fix in v1.1.2:
+Fix in v1.1.3:
 - Added 9-column positional fallback for the exact lottery CSV structure.
 - This handles files where browser encoding/header recognition fails.
+
+Fix in v1.1.3:
+- Prefer Hebrew Windows encoding before UTF-8.
+- Strong DD/MM/YYYY date parser.
+- Better error message with sample parsed dates.

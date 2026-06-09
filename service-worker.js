@@ -1,4 +1,4 @@
-const CACHE_NAME = "lottery-analyzer-pwa-v1-1-2";
+const CACHE_NAME = "lottery-analyzer-pwa-v1-1-3";
 const ASSETS = [
   "./",
   "./index.html",

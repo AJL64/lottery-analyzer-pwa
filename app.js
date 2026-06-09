@@ -1,4 +1,4 @@
-const MIN_DATE = new Date("2011-03-05T00:00:00");
+const MIN_DATE = makeDate(5, 3, 2011);
 let currentRows = [];
 
 const el = id => document.getElementById(id);
@@ -24,7 +24,11 @@ el("analyzeBtn").addEventListener("click", () => {
   try {
     if (!currentRows.length) throw new Error("Please load a CSV file first.");
     const data = normalizeRows(currentRows).filter(row => row.date >= MIN_DATE);
-    if (!data.length) throw new Error("No current-format rows found from 05/03/2011 onward.");
+    if (!data.length) {
+      const normalized = normalizeRows(currentRows);
+      const sampleDates = normalized.slice(0, 5).map(r => r.date instanceof Date && !isNaN(r.date) ? formatDate(r.date) : "Invalid").join(", ");
+      throw new Error(`No current-format rows found from 05/03/2011 onward. Sample parsed dates: ${sampleDates}`);
+    }
 
     const result = analyze(data);
     render(result);
@@ -51,7 +55,7 @@ function decodeCsvBuffer(buffer) {
   // Israeli lottery CSV files are often saved as Hebrew Windows encoding (cp1255),
   // while browser File.text() assumes UTF-8. Try several encodings and keep
   // the first one whose headers are recognized.
-  const encodings = ["utf-8", "windows-1255", "iso-8859-8", "windows-1252"];
+  const encodings = ["windows-1255", "iso-8859-8", "utf-8", "windows-1252"];
 
   let lastError = null;
 
@@ -215,14 +219,34 @@ function normalizeRows(rows) {
   ).sort((a,b) => a.date - b.date);
 }
 
+function makeDate(day, month, year) {
+  return new Date(Number(year), Number(month) - 1, Number(day));
+}
+
 function parseDate(value) {
-  const s = String(value).trim();
-  const parts = s.split(/[./-]/).map(Number);
-  if (parts.length === 3) {
-    let [d, m, y] = parts;
-    if (y < 100) y += y > 50 ? 1900 : 2000;
-    return new Date(y, m - 1, d);
+  const s = String(value ?? "").trim();
+
+  // Main lottery CSV format: DD/MM/YYYY
+  let match = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/);
+  if (match) {
+    let day = Number(match[1]);
+    let month = Number(match[2]);
+    let year = Number(match[3]);
+    if (year < 100) year += year > 50 ? 1900 : 2000;
+    return makeDate(day, month, year);
   }
+
+  // Fallback: extract first three numeric parts from messy strings
+  const parts = s.match(/\d+/g);
+  if (parts && parts.length >= 3) {
+    let day = Number(parts[0]);
+    let month = Number(parts[1]);
+    let year = Number(parts[2]);
+    if (year < 100) year += year > 50 ? 1900 : 2000;
+    return makeDate(day, month, year);
+  }
+
+  // Final fallback for ISO-like browser-readable formats
   return new Date(s);
 }
 
