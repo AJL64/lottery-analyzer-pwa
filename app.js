@@ -7,10 +7,17 @@ el("csvFile").addEventListener("change", async event => {
   const file = event.target.files[0];
   if (!file) return;
 
-  const text = await file.text();
-  currentRows = parseCsv(text);
-  localStorage.setItem("lotteryLastCsvName", file.name);
-  el("status").textContent = `Loaded ${file.name}. Press Analyze.`;
+  try {
+    const buffer = await file.arrayBuffer();
+    const decoded = decodeCsvBuffer(buffer);
+    currentRows = decoded.rows;
+    localStorage.setItem("lotteryLastCsvName", file.name);
+    el("status").textContent = `Loaded ${file.name} using ${decoded.encoding}. Press Analyze.`;
+  } catch (err) {
+    currentRows = [];
+    el("status").textContent = `Error loading CSV: ${err.message}`;
+    alert(err.message);
+  }
 });
 
 el("analyzeBtn").addEventListener("click", () => {
@@ -40,10 +47,59 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
 }
 
+function decodeCsvBuffer(buffer) {
+  // Israeli lottery CSV files are often saved as Hebrew Windows encoding (cp1255),
+  // while browser File.text() assumes UTF-8. Try several encodings and keep
+  // the first one whose headers are recognized.
+  const encodings = ["utf-8", "windows-1255", "iso-8859-8", "windows-1252"];
+
+  let lastError = null;
+
+  for (const encoding of encodings) {
+    try {
+      const decoder = new TextDecoder(encoding, {fatal: false});
+      const text = decoder.decode(buffer);
+      const rows = parseCsv(text);
+
+      if (!rows.length) continue;
+
+      const keys = Object.keys(rows[0] || {}).map(k => cleanHeader(k));
+      const hasDraw = findAlias(keys, DRAW_ID_ALIASES);
+      const hasDate = findAlias(keys, DATE_ALIASES);
+      const hasExtra = findAlias(keys, EXTRA_ALIASES);
+
+      if (hasDraw && hasDate && hasExtra) {
+        return {encoding, rows};
+      }
+
+      lastError = new Error(`encoding ${encoding} decoded, but headers were not recognized: ${keys.join(" | ")}`);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw new Error(`CSV structure not recognized. Could not identify draw id, date and extra columns. Last error: ${lastError ? lastError.message : "unknown"}`);
+}
+
+function detectDelimiter(headerLine) {
+  const candidates = [",", ";", "\t"];
+  let best = ",";
+  let bestCount = -1;
+  for (const delimiter of candidates) {
+    const count = parseCsvLine(headerLine, delimiter).length;
+    if (count > bestCount) {
+      best = delimiter;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 function parseCsv(text) {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter(line => line.trim().length);
-  const rows = lines.map(parseCsvLine);
-  const header = rows[0].map(x => x.trim());
+  const delimiter = detectDelimiter(lines[0]);
+  const rows = lines.map(line => parseCsvLine(line, delimiter));
+  const header = rows[0].map(x => cleanHeader(x));
   return rows.slice(1).map(values => {
     const obj = {};
     header.forEach((h, i) => obj[h] = (values[i] ?? "").trim());
@@ -51,7 +107,7 @@ function parseCsv(text) {
   });
 }
 
-function parseCsvLine(line) {
+function parseCsvLine(line, delimiter = ',') {
   const result = [];
   let value = "";
   let insideQuotes = false;
@@ -65,7 +121,7 @@ function parseCsvLine(line) {
       i++;
     } else if (ch === '"') {
       insideQuotes = !insideQuotes;
-    } else if (ch === "," && !insideQuotes) {
+    } else if (ch === delimiter && !insideQuotes) {
       result.push(value);
       value = "";
     } else {
@@ -77,26 +133,44 @@ function parseCsvLine(line) {
   return result;
 }
 
+const DRAW_ID_ALIASES = ["הגרלה", "מספר הגרלה", "מס' הגרלה", "מספר", "draw", "drawid", "draw id", "lottery", "lottery number", "a"];
+const DATE_ALIASES = ["תאריך", "תאריך הגרלה", "date", "draw date", "lottery date", "ב", "b"];
+const EXTRA_ALIASES = ["המספר החזק/נוסף", "המספר החזק", "מספר חזק", "חזק", "נוסף", "extra", "extra number", "strong", "i"];
+
+function cleanHeader(value) {
+  return String(value ?? "")
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function findAlias(keys, aliases) {
+  const cleanedAliases = aliases.map(cleanHeader);
+  return keys.find(k => cleanedAliases.includes(k));
+}
+
 function normalizeRows(rows) {
   const sample = rows[0] || {};
-  const keys = Object.keys(sample).map(k => k.trim());
-  const keyMap = new Map(Object.keys(sample).map(k => [k.trim(), k]));
+  const originalKeys = Object.keys(sample);
+  const keys = originalKeys.map(cleanHeader);
+  const keyMap = new Map(originalKeys.map(k => [cleanHeader(k), k]));
 
   const findKey = aliases => {
-    const found = aliases.find(a => keys.includes(a));
+    const found = findAlias(keys, aliases);
     return found ? keyMap.get(found) : null;
   };
 
   const cols = {
-    drawId: findKey(["הגרלה", "מספר הגרלה", "a"]),
-    date: findKey(["תאריך", "ב", "b"]),
-    n1: findKey(["1", "c"]),
-    n2: findKey(["2", "d"]),
-    n3: findKey(["3", "e"]),
-    n4: findKey(["4", "f"]),
-    n5: findKey(["5", "g"]),
-    n6: findKey(["6", "h"]),
-    extra: findKey(["המספר החזק/נוסף", "מספר חזק", "נוסף", "extra", "i"])
+    drawId: findKey(DRAW_ID_ALIASES),
+    date: findKey(DATE_ALIASES),
+    n1: findKey(["1", "number 1", "num 1", "c"]),
+    n2: findKey(["2", "number 2", "num 2", "d"]),
+    n3: findKey(["3", "number 3", "num 3", "e"]),
+    n4: findKey(["4", "number 4", "num 4", "f"]),
+    n5: findKey(["5", "number 5", "num 5", "g"]),
+    n6: findKey(["6", "number 6", "num 6", "h"]),
+    extra: findKey(EXTRA_ALIASES)
   };
 
   const missing = Object.entries(cols).filter(([, v]) => !v).map(([k]) => k);
